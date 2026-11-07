@@ -1,5 +1,11 @@
-import React, { useEffect, useRef, useState } from "react";
-import * as maplibregl from "maplibre-gl";
+import React, { useEffect, useRef, useState, useCallback } from "react";
+import {
+  Map as MapLibreMap,
+  NavigationControl,
+  Popup,
+  LngLatBounds,
+  type GeoJSONSource,
+} from "maplibre-gl";
 import type { CorridorHeatmapGeoJSON, RoutePlan } from "../api/types";
 import { RISK_COLORS } from "../lib/riskColors";
 import { formatDateTime } from "../lib/format";
@@ -29,51 +35,112 @@ export const MapView: React.FC<MapViewProps> = ({
   onSelectRoute,
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<maplibregl.Map | null>(null);
-  const popupRef = useRef<maplibregl.Popup | null>(null);
+  const mapRef = useRef<MapLibreMap | null>(null);
+  const popupRef = useRef<Popup | null>(null);
   const [mapLoaded, setMapLoaded] = useState(false);
+
+  // Active route ID fallback
+  const activeRouteId = selectedRouteId || (routes.length > 0 ? routes[0].id : "");
+
+  // Fit bounds to selected route
+  const fitRouteBounds = useCallback(
+    (targetRouteId: string) => {
+      const map = mapRef.current;
+      if (!map || routes.length === 0) return;
+
+      const activeRoute = routes.find((r) => r.id === targetRouteId) || routes[0];
+      if (!activeRoute?.geometry?.coordinates?.length) return;
+
+      const bounds = new LngLatBounds();
+      activeRoute.geometry.coordinates.forEach((coord) => {
+        const lon = Number(coord[0]);
+        const lat = Number(coord[1]);
+        if (!isNaN(lon) && !isNaN(lat)) {
+          bounds.extend([lon, lat]);
+        }
+      });
+
+      if (!bounds.isEmpty()) {
+        try {
+          map.fitBounds(bounds, {
+            padding: { top: 60, bottom: 120, left: 60, right: 60 },
+            maxZoom: 12,
+            duration: 1000,
+          });
+        } catch (err) {
+          console.warn("fitBounds error:", err);
+        }
+      }
+    },
+    [routes]
+  );
 
   // Initialize Map
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return;
 
-    const map = new maplibregl.Map({
+    const map = new MapLibreMap({
       container: mapContainerRef.current,
       style: DEFAULT_STYLE,
-      center: [-98.5795, 39.8283], // Geographic center of US
+      center: [-98.5795, 39.8283],
       zoom: 4,
       attributionControl: false,
     });
 
-    map.addControl(new maplibregl.NavigationControl(), "top-right");
+    map.addControl(new NavigationControl({ showCompass: true }), "top-right");
 
     map.on("load", () => {
       setMapLoaded(true);
+      map.resize();
+    });
+
+    map.on("error", (e) => {
+      // Non-fatal tile or font warnings
+      if (e?.error?.message?.includes?.("layer") || e?.error?.message?.includes?.("source")) {
+        console.error("MapLibre layer/source error:", e.error);
+      }
     });
 
     mapRef.current = map;
 
+    // ResizeObserver ensures canvas updates if container dimensions change
+    const resizeObserver = new ResizeObserver(() => {
+      if (mapRef.current) {
+        mapRef.current.resize();
+      }
+    });
+    resizeObserver.observe(mapContainerRef.current);
+
     return () => {
+      resizeObserver.disconnect();
+      if (popupRef.current) popupRef.current.remove();
       map.remove();
       mapRef.current = null;
+      setMapLoaded(false);
     };
   }, []);
 
-  // Set up or update Route and Checkpoint sources/layers
+  // Update or render routes and checkpoints whenever routes or mapLoaded change
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !mapLoaded || routes.length === 0) return;
+    if (!map || !mapLoaded || !map.isStyleLoaded() || routes.length === 0) return;
 
-    // 1. Prepare GeoJSON FeatureCollections for routes
+    // 1. Prepare GeoJSON FeatureCollection for routes (strictly [lon, lat])
     const routeFeatures = routes.map((r) => ({
       type: "Feature" as const,
       properties: {
         id: r.id,
         name: r.name,
-        isSelected: r.id === selectedRouteId,
+        isSelected: r.id === activeRouteId,
         rank: r.rank,
       },
-      geometry: r.geometry,
+      geometry: {
+        type: "LineString" as const,
+        coordinates: r.geometry.coordinates.map((coord) => [
+          Number(coord[0]),
+          Number(coord[1]),
+        ]),
+      },
     }));
 
     const routeGeoJSON = {
@@ -81,7 +148,7 @@ export const MapView: React.FC<MapViewProps> = ({
       features: routeFeatures,
     };
 
-    // 2. Prepare GeoJSON for checkpoints
+    // 2. Prepare GeoJSON FeatureCollection for checkpoints (strictly [lon, lat])
     const checkpointFeatures: any[] = [];
     routes.forEach((r) => {
       r.checkpoints.forEach((cp) => {
@@ -98,11 +165,11 @@ export const MapView: React.FC<MapViewProps> = ({
             level: cp.level,
             color: RISK_COLORS[cp.level],
             intervals: cp.intervals,
-            reasons: JSON.stringify(cp.reasons),
+            reasons: JSON.stringify(cp.reasons || []),
           },
           geometry: {
             type: "Point",
-            coordinates: [cp.lon, cp.lat],
+            coordinates: [Number(cp.lon), Number(cp.lat)],
           },
         });
       });
@@ -113,17 +180,18 @@ export const MapView: React.FC<MapViewProps> = ({
       features: checkpointFeatures,
     };
 
-    // Add or update 'routes-source'
-    const routeSource = map.getSource("routes-source") as maplibregl.GeoJSONSource;
-    if (routeSource) {
-      routeSource.setData(routeGeoJSON);
+    // Add or update routes source and layer
+    const existingRouteSource = map.getSource("routes-source") as GeoJSONSource | undefined;
+    if (existingRouteSource) {
+      existingRouteSource.setData(routeGeoJSON);
     } else {
       map.addSource("routes-source", {
         type: "geojson",
         data: routeGeoJSON,
       });
+    }
 
-      // Route line layer
+    if (!map.getLayer("routes-line")) {
       map.addLayer({
         id: "routes-line",
         type: "line",
@@ -135,27 +203,27 @@ export const MapView: React.FC<MapViewProps> = ({
         paint: {
           "line-color": [
             "case",
-            ["==", ["get", "id"], selectedRouteId],
-            "#4f46e5", // Indigo for active
-            "#94a3b8", // Muted slate for inactive
+            ["==", ["get", "id"], activeRouteId],
+            "#4f46e5",
+            "#94a3b8",
           ],
           "line-width": [
             "case",
-            ["==", ["get", "id"], selectedRouteId],
+            ["==", ["get", "id"], activeRouteId],
             6,
             3.5,
           ],
           "line-opacity": [
             "case",
-            ["==", ["get", "id"], selectedRouteId],
+            ["==", ["get", "id"], activeRouteId],
             1.0,
-            0.4, // Inactive routes fade to 40% opacity per PRD
+            0.4,
           ],
         },
       });
 
-      // Click to select route from map
-      map.on("click", "routes-line", (e: any) => {
+      // Click on route to select
+      map.on("click", "routes-line", (e) => {
         if (e.features && e.features[0] && onSelectRoute) {
           const clickedId = e.features[0].properties?.id;
           if (clickedId) onSelectRoute(clickedId);
@@ -163,26 +231,28 @@ export const MapView: React.FC<MapViewProps> = ({
       });
     }
 
-    // Add or update 'checkpoints-source'
-    const cpSource = map.getSource("checkpoints-source") as maplibregl.GeoJSONSource;
-    if (cpSource) {
-      cpSource.setData(checkpointGeoJSON);
+    // Add or update checkpoints source and layer
+    const existingCpSource = map.getSource("checkpoints-source") as GeoJSONSource | undefined;
+    if (existingCpSource) {
+      existingCpSource.setData(checkpointGeoJSON);
     } else {
       map.addSource("checkpoints-source", {
         type: "geojson",
         data: checkpointGeoJSON,
       });
+    }
 
-      // Checkpoint circles layer
+    if (!map.getLayer("checkpoints-layer")) {
       map.addLayer({
         id: "checkpoints-layer",
         type: "circle",
         source: "checkpoints-source",
+        filter: ["in", selectedInterval, ["get", "intervals"]],
         paint: {
           "circle-color": ["get", "color"],
           "circle-radius": [
             "case",
-            ["==", ["get", "routeId"], selectedRouteId],
+            ["==", ["get", "routeId"], activeRouteId],
             6.5,
             4,
           ],
@@ -190,7 +260,7 @@ export const MapView: React.FC<MapViewProps> = ({
           "circle-stroke-color": "#ffffff",
           "circle-opacity": [
             "case",
-            ["==", ["get", "routeId"], selectedRouteId],
+            ["==", ["get", "routeId"], activeRouteId],
             1.0,
             0.35,
           ],
@@ -198,7 +268,7 @@ export const MapView: React.FC<MapViewProps> = ({
       });
 
       // Checkpoint click popup
-      map.on("click", "checkpoints-layer", (e: any) => {
+      map.on("click", "checkpoints-layer", (e) => {
         if (!e.features || !e.features[0]) return;
         const feat = e.features[0];
         const geom = feat.geometry as any;
@@ -225,17 +295,18 @@ export const MapView: React.FC<MapViewProps> = ({
                 <div><span style="color:#64748b;">Rain:</span> <strong>${props.rain} in/h</strong></div>
                 <div><span style="color:#64748b;">Snow:</span> <strong>${props.snow} in/h</strong></div>
               </div>
-              ${reasons.length > 0
-            ? `<div style="padding: 6px 8px; background: #fef2f2; border-left: 3px solid #ef4444; color: #991b1b; font-size: 11px; border-radius: 2px;">
+              ${
+                reasons.length > 0
+                  ? `<div style="padding: 6px 8px; background: #fef2f2; border-left: 3px solid #ef4444; color: #991b1b; font-size: 11px; border-radius: 2px;">
                       ${reasons.join("<br/>")}
                     </div>`
-            : ""
-          }
+                  : ""
+              }
             </div>
           </div>
         `;
 
-        const popup = new maplibregl.Popup({ closeButton: true, closeOnClick: true, offset: 12 })
+        const popup = new Popup({ closeButton: true, closeOnClick: true, offset: 12 })
           .setLngLat(geom.coordinates)
           .setHTML(popupHtml)
           .addTo(map);
@@ -243,7 +314,6 @@ export const MapView: React.FC<MapViewProps> = ({
         popupRef.current = popup;
       });
 
-      // Pointer cursor on checkpoint hover
       map.on("mouseenter", "checkpoints-layer", () => {
         map.getCanvas().style.cursor = "pointer";
       });
@@ -252,67 +322,60 @@ export const MapView: React.FC<MapViewProps> = ({
       });
     }
 
-    // Fit map bounds to encompass the routes
-    const bounds = new maplibregl.LngLatBounds();
-    routes.forEach((r) => {
-      r.geometry.coordinates.forEach((coord) => {
-        bounds.extend(coord as [number, number]);
-      });
-    });
+    // Always zoom/fit bounds to the selected route when new plan data arrives
+    fitRouteBounds(activeRouteId);
+  }, [routes, mapLoaded, fitRouteBounds]);
 
-    if (!bounds.isEmpty()) {
-      map.fitBounds(bounds, { padding: 60, maxZoom: 12, duration: 800 });
-    }
-  }, [routes, mapLoaded]);
-
-  // Update selected route styling on the fly (instant, 0 fetch)
+  // When selectedRouteId changes, update styles and zoom to the active route
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !mapLoaded || !map.getLayer("routes-line")) return;
+    if (!map || !mapLoaded || !map.isStyleLoaded()) return;
 
-    map.setPaintProperty("routes-line", "line-color", [
-      "case",
-      ["==", ["get", "id"], selectedRouteId],
-      "#4f46e5",
-      "#94a3b8",
-    ]);
-
-    map.setPaintProperty("routes-line", "line-width", [
-      "case",
-      ["==", ["get", "id"], selectedRouteId],
-      6,
-      3.5,
-    ]);
-
-    map.setPaintProperty("routes-line", "line-opacity", [
-      "case",
-      ["==", ["get", "id"], selectedRouteId],
-      1.0,
-      0.4,
-    ]);
+    if (map.getLayer("routes-line")) {
+      map.setPaintProperty("routes-line", "line-color", [
+        "case",
+        ["==", ["get", "id"], activeRouteId],
+        "#4f46e5",
+        "#94a3b8",
+      ]);
+      map.setPaintProperty("routes-line", "line-width", [
+        "case",
+        ["==", ["get", "id"], activeRouteId],
+        6,
+        3.5,
+      ]);
+      map.setPaintProperty("routes-line", "line-opacity", [
+        "case",
+        ["==", ["get", "id"], activeRouteId],
+        1.0,
+        0.4,
+      ]);
+    }
 
     if (map.getLayer("checkpoints-layer")) {
       map.setPaintProperty("checkpoints-layer", "circle-opacity", [
         "case",
-        ["==", ["get", "routeId"], selectedRouteId],
+        ["==", ["get", "routeId"], activeRouteId],
         1.0,
         0.35,
       ]);
       map.setPaintProperty("checkpoints-layer", "circle-radius", [
         "case",
-        ["==", ["get", "routeId"], selectedRouteId],
+        ["==", ["get", "routeId"], activeRouteId],
         6.5,
         4,
       ]);
     }
-  }, [selectedRouteId, mapLoaded]);
 
-  // Update checkpoint interval filter on the fly (instant, 0 fetch)
+    // Zoom and pan smoothly to the newly selected route
+    fitRouteBounds(activeRouteId);
+  }, [activeRouteId, mapLoaded, fitRouteBounds]);
+
+  // Filter checkpoints by interval (10, 25, 50 mi) instantly without network request
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !mapLoaded || !map.getLayer("checkpoints-layer")) return;
+    if (!map || !mapLoaded || !map.isStyleLoaded() || !map.getLayer("checkpoints-layer")) return;
 
-    // Filter checkpoints where cp.intervals contains selectedInterval
     map.setFilter("checkpoints-layer", [
       "in",
       selectedInterval,
@@ -323,18 +386,21 @@ export const MapView: React.FC<MapViewProps> = ({
   // Corridor Heatmap Layer handling
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !mapLoaded || !heatmapData) return;
+    if (!map || !mapLoaded || !map.isStyleLoaded() || !heatmapData) return;
 
-    const heatmapSource = map.getSource("corridor-heatmap-source") as maplibregl.GeoJSONSource;
-    if (heatmapSource) {
-      heatmapSource.setData(heatmapData);
+    const existingHeatmapSource = map.getSource("corridor-heatmap-source") as GeoJSONSource | undefined;
+    if (existingHeatmapSource) {
+      existingHeatmapSource.setData(heatmapData);
     } else {
       map.addSource("corridor-heatmap-source", {
         type: "geojson",
         data: heatmapData,
       });
+    }
 
-      // Insert heatmap layer underneath route lines
+    if (!map.getLayer("corridor-heatmap")) {
+      // Safe insertion: only pass beforeId if routes-line exists
+      const beforeId = map.getLayer("routes-line") ? "routes-line" : undefined;
       map.addLayer(
         {
           id: "corridor-heatmap",
@@ -348,7 +414,7 @@ export const MapView: React.FC<MapViewProps> = ({
               ["linear"],
               ["zoom"],
               0, 0.8,
-              9, 2.5
+              9, 2.5,
             ],
             "heatmap-color": [
               "interpolate",
@@ -359,7 +425,7 @@ export const MapView: React.FC<MapViewProps> = ({
               0.4, RISK_COLORS["Moderate"],
               0.65, RISK_COLORS["High"],
               0.85, RISK_COLORS["Severe"],
-              1.0, RISK_COLORS["No Travel"]
+              1.0, RISK_COLORS["No Travel"],
             ],
             "heatmap-radius": [
               "interpolate",
@@ -367,20 +433,20 @@ export const MapView: React.FC<MapViewProps> = ({
               ["zoom"],
               0, 15,
               7, 35,
-              12, 60
+              12, 60,
             ],
             "heatmap-opacity": 0.85,
           },
         },
-        "routes-line"
+        beforeId
       );
     }
-  }, [heatmapData, mapLoaded]);
+  }, [heatmapData, mapLoaded, hourOffset]);
 
-  // Update Heatmap Visibility on the fly
+  // Toggle Heatmap visibility
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !mapLoaded || !map.getLayer("corridor-heatmap")) return;
+    if (!map || !mapLoaded || !map.isStyleLoaded() || !map.getLayer("corridor-heatmap")) return;
 
     map.setLayoutProperty(
       "corridor-heatmap",
@@ -389,13 +455,15 @@ export const MapView: React.FC<MapViewProps> = ({
     );
   }, [showHeatmap, mapLoaded]);
 
-  // Scrub Heatmap Weight at 60fps on hour change (Zero network calls, instant paint property update)
+  // Scrub Heatmap at 60fps via paint property update
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !mapLoaded || !map.getLayer("corridor-heatmap")) return;
+    if (!map || !mapLoaded || !map.isStyleLoaded() || !map.getLayer("corridor-heatmap")) return;
 
     requestAnimationFrame(() => {
-      map.setPaintProperty("corridor-heatmap", "heatmap-weight", ["get", `r${hourOffset}`]);
+      if (map.getLayer("corridor-heatmap")) {
+        map.setPaintProperty("corridor-heatmap", "heatmap-weight", ["get", `r${hourOffset}`]);
+      }
     });
   }, [hourOffset, mapLoaded]);
 
