@@ -2,6 +2,8 @@
 
 > **A React + Django web app that returns 3 truck routes, scores each for weather risk at the truck's arrival time at every checkpoint, and recommends the safest one.**
 
+![System Architecture](docs/screenshots/architecture.svg)
+
 ---
 
 ## 🌐 Live Demo
