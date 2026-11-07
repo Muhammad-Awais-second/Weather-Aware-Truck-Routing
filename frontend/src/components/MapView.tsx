@@ -4,12 +4,20 @@ import {
   NavigationControl,
   Popup,
   LngLatBounds,
+  setWorkerUrl,
   type GeoJSONSource,
 } from "maplibre-gl";
+import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
 import type { CorridorHeatmapGeoJSON, RoutePlan } from "../api/types";
 import { RISK_COLORS } from "../lib/riskColors";
 import { formatDateTime } from "../lib/format";
 import { Compass } from "lucide-react";
+
+// Explicitly configure MapLibre worker URL via Vite ?url import
+if (typeof setWorkerUrl === "function") {
+  setWorkerUrl(workerUrl);
+}
+(MapLibreMap as any).workerUrl = workerUrl;
 
 interface MapViewProps {
   routes: RoutePlan[];
