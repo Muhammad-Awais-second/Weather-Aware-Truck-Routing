@@ -8,7 +8,7 @@
 
 - **Frontend (Vercel):** [https://weather-aware-truck-routing-liard.vercel.app](https://weather-aware-truck-routing-liard.vercel.app)
 - **Backend API (Render):** [https://weather-aware-truck-routing-r9x5.onrender.com](https://weather-aware-truck-routing-r9x5.onrender.com)
-- **Loom Walkthrough:** LOOM_LINK_HERE *(placeholder)*
+- **Video Walkthrough:** [https://www.awesomescreenshot.com/video/58161282?key=137b843ba5e471d1602492b44cffde74](https://www.awesomescreenshot.com/video/58161282?key=137b843ba5e471d1602492b44cffde74)
 
 > [!NOTE]
 > The backend runs on Render's free tier. If the service has been inactive, the first request may take approximately 50–60 seconds to spin up. Subsequent requests respond in under 1 second.
