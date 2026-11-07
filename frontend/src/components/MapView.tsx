@@ -110,6 +110,7 @@ export const MapView: React.FC<MapViewProps> = ({
     });
 
     mapRef.current = map;
+    (window as any).__map = map;
 
     // ResizeObserver ensures canvas updates if container dimensions change
     const resizeObserver = new ResizeObserver(() => {
@@ -390,7 +391,7 @@ export const MapView: React.FC<MapViewProps> = ({
     ]);
   }, [selectedInterval, mapLoaded]);
 
-  // Corridor Heatmap Layer handling
+  // Corridor Heatmap & Points Layer handling
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapLoaded || !map.isStyleLoaded() || !heatmapData) return;
@@ -405,9 +406,10 @@ export const MapView: React.FC<MapViewProps> = ({
       });
     }
 
+    // Safe insertion: only pass beforeId if routes-line exists
+    const beforeId = map.getLayer("routes-line") ? "routes-line" : undefined;
+
     if (!map.getLayer("corridor-heatmap")) {
-      // Safe insertion: only pass beforeId if routes-line exists
-      const beforeId = map.getLayer("routes-line") ? "routes-line" : undefined;
       map.addLayer(
         {
           id: "corridor-heatmap",
@@ -415,21 +417,22 @@ export const MapView: React.FC<MapViewProps> = ({
           source: "corridor-heatmap-source",
           maxzoom: 13,
           paint: {
-            "heatmap-weight": ["get", `r${hourOffset}`],
+            "heatmap-weight": ["/", ["get", `r${hourOffset}`], 4],
             "heatmap-intensity": [
               "interpolate",
               ["linear"],
               ["zoom"],
-              0, 0.8,
-              9, 2.5,
+              0, 1.0,
+              9, 3.0,
             ],
             "heatmap-color": [
               "interpolate",
               ["linear"],
               ["heatmap-density"],
               0, "rgba(34, 197, 94, 0)",
-              0.2, RISK_COLORS["Low"],
-              0.4, RISK_COLORS["Moderate"],
+              0.1, "rgba(34, 197, 94, 0.25)",
+              0.25, RISK_COLORS["Low"],
+              0.45, RISK_COLORS["Moderate"],
               0.65, RISK_COLORS["High"],
               0.85, RISK_COLORS["Severe"],
               1.0, RISK_COLORS["No Travel"],
@@ -442,34 +445,90 @@ export const MapView: React.FC<MapViewProps> = ({
               7, 35,
               12, 60,
             ],
-            "heatmap-opacity": 0.85,
+            "heatmap-opacity": 0.75,
           },
         },
         beforeId
       );
     }
-  }, [heatmapData, mapLoaded, hourOffset]);
 
-  // Toggle Heatmap visibility
+    // Corridor Points Circle Layer: visible at low values and changes color with slider
+    if (!map.getLayer("corridor-points")) {
+      map.addLayer(
+        {
+          id: "corridor-points",
+          type: "circle",
+          source: "corridor-heatmap-source",
+          paint: {
+            "circle-color": [
+              "step",
+              ["get", `r${hourOffset}`],
+              RISK_COLORS["Low"],
+              1, RISK_COLORS["Moderate"],
+              2, RISK_COLORS["High"],
+              3, RISK_COLORS["Severe"],
+              4, RISK_COLORS["No Travel"],
+            ],
+            "circle-radius": [
+              "interpolate",
+              ["linear"],
+              ["zoom"],
+              3, 3,
+              7, 6,
+              12, 12,
+            ],
+            "circle-opacity": 0.35,
+            "circle-stroke-width": 0.5,
+            "circle-stroke-color": "#ffffff",
+            "circle-stroke-opacity": 0.3,
+          },
+        },
+        beforeId
+      );
+    }
+  }, [heatmapData, mapLoaded]);
+
+  // Toggle Heatmap & Corridor Points visibility
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !mapLoaded || !map.isStyleLoaded() || !map.getLayer("corridor-heatmap")) return;
+    if (!map || !mapLoaded || !map.isStyleLoaded()) return;
 
-    map.setLayoutProperty(
-      "corridor-heatmap",
-      "visibility",
-      showHeatmap ? "visible" : "none"
-    );
+    const visibility = showHeatmap ? "visible" : "none";
+    if (map.getLayer("corridor-heatmap")) {
+      map.setLayoutProperty("corridor-heatmap", "visibility", visibility);
+    }
+    if (map.getLayer("corridor-points")) {
+      map.setLayoutProperty("corridor-points", "visibility", visibility);
+    }
   }, [showHeatmap, mapLoaded]);
 
-  // Scrub Heatmap at 60fps via paint property update
+  // Scrub Heatmap & Corridor Points at 60fps via paint property update (no refetch, no React re-render of map)
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !mapLoaded || !map.isStyleLoaded() || !map.getLayer("corridor-heatmap")) return;
+    if (!map || !mapLoaded || !map.isStyleLoaded()) return;
 
     requestAnimationFrame(() => {
       if (map.getLayer("corridor-heatmap")) {
-        map.setPaintProperty("corridor-heatmap", "heatmap-weight", ["get", `r${hourOffset}`]);
+        map.setPaintProperty("corridor-heatmap", "heatmap-weight", [
+          "/",
+          ["get", `r${hourOffset}`],
+          4,
+        ]);
+      }
+      if (map.getLayer("corridor-points")) {
+        map.setPaintProperty("corridor-points", "circle-color", [
+          "step",
+          ["get", `r${hourOffset}`],
+          RISK_COLORS["Low"],
+          1,
+          RISK_COLORS["Moderate"],
+          2,
+          RISK_COLORS["High"],
+          3,
+          RISK_COLORS["Severe"],
+          4,
+          RISK_COLORS["No Travel"],
+        ]);
       }
     });
   }, [hourOffset, mapLoaded]);

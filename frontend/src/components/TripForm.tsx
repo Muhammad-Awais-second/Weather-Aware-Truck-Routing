@@ -45,7 +45,7 @@ export const TripForm: React.FC<TripFormProps> = ({
     const tzOffset = d.getTimezoneOffset() * 60000;
     return new Date(d.getTime() - tzOffset).toISOString().slice(0, 16);
   });
-  const [loadWeight, setLoadWeight] = useState<number>(38000);
+  const [loadWeight, setLoadWeight] = useState<number | string>(38000);
   const [validationError, setValidationError] = useState<string | null>(null);
 
   // Debounced search for origin
@@ -91,7 +91,8 @@ export const TripForm: React.FC<TripFormProps> = ({
       setValidationError("Origin and destination must be different cities.");
       return;
     }
-    if (!loadWeight || loadWeight < 1 || loadWeight > 80000) {
+    const weightNum = Number(loadWeight);
+    if (!loadWeight || isNaN(weightNum) || weightNum < 1 || weightNum > 80000) {
       setValidationError("Load weight must be between 1 and 80,000 lb.");
       return;
     }
@@ -101,7 +102,7 @@ export const TripForm: React.FC<TripFormProps> = ({
       origin: originPoint,
       destination: destPoint,
       departure_at: depDate.toISOString(),
-      load_weight_lb: Number(loadWeight),
+      load_weight_lb: weightNum,
     });
   };
 
@@ -276,9 +277,9 @@ export const TripForm: React.FC<TripFormProps> = ({
                 type="number"
                 min="1"
                 max="80000"
-                step="500"
+                step="1"
                 value={loadWeight}
-                onChange={(e) => setLoadWeight(Number(e.target.value))}
+                onChange={(e) => setLoadWeight(e.target.value === "" ? "" : Number(e.target.value))}
                 className="w-full pl-9 pr-3 py-2 text-xs bg-slate-50 focus:bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
               />
             </div>
