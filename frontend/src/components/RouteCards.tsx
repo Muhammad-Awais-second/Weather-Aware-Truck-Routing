@@ -65,18 +65,16 @@ export const RouteCards: React.FC<RouteCardsProps> = ({
             <div
               key={route.id}
               onClick={() => onSelectRoute(route.id)}
-              className={`cursor-pointer rounded-xl border transition-all duration-200 p-4 relative ${
-                isSelected
+              className={`cursor-pointer rounded-xl border transition-all duration-200 p-4 relative ${isSelected
                   ? "border-indigo-600 ring-2 ring-indigo-500/20 shadow-md bg-white"
                   : "border-slate-200 bg-white/80 hover:bg-white hover:border-slate-300 shadow-xs"
-              } ${isRecommended ? "border-l-4 border-l-emerald-600" : ""}`}
+                } ${isRecommended ? "border-l-4 border-l-emerald-600" : ""}`}
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <span
-                    className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold ${
-                      isSelected ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-700"
-                    }`}
+                    className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold ${isSelected ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-700"
+                      }`}
                   >
                     {route.rank}
                   </span>
