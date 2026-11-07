@@ -295,13 +295,12 @@ export const MapView: React.FC<MapViewProps> = ({
                 <div><span style="color:#64748b;">Rain:</span> <strong>${props.rain} in/h</strong></div>
                 <div><span style="color:#64748b;">Snow:</span> <strong>${props.snow} in/h</strong></div>
               </div>
-              ${
-                reasons.length > 0
-                  ? `<div style="padding: 6px 8px; background: #fef2f2; border-left: 3px solid #ef4444; color: #991b1b; font-size: 11px; border-radius: 2px;">
+              ${reasons.length > 0
+            ? `<div style="padding: 6px 8px; background: #fef2f2; border-left: 3px solid #ef4444; color: #991b1b; font-size: 11px; border-radius: 2px;">
                       ${reasons.join("<br/>")}
                     </div>`
-                  : ""
-              }
+            : ""
+          }
             </div>
           </div>
         `;
