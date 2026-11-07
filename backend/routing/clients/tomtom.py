@@ -1,11 +1,11 @@
 """
-TomTom Routing and Geocoding client with fallback generator for zero-config evaluation.
+TomTom Routing and Geocoding client with strict configuration and optional demo mode.
 """
 import os
 import math
 import logging
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime
+from typing import Any, Dict, List, Tuple
 import httpx
 
 logger = logging.getLogger(__name__)
@@ -15,6 +15,20 @@ TOMTOM_GEOCODE_URL = "https://api.tomtom.com/search/2/geocode"
 
 METERS_TO_MILES = 0.000621371
 LB_TO_KG = 0.45359237
+
+
+class TomTomConfigurationError(Exception):
+    """Raised when TOMTOM_API_KEY is not configured and DEMO_MODE is not active."""
+    pass
+
+
+class TomTomAPIError(Exception):
+    """Raised when TomTom API returns an error response."""
+    pass
+
+
+def is_demo_mode_enabled() -> bool:
+    return os.environ.get("DEMO_MODE", "false").lower() in ("true", "1", "yes")
 
 
 def get_perpendicular_offset_point(
@@ -51,7 +65,7 @@ def generate_fallback_routes(
     load_weight_lb: float
 ) -> List[Dict[str, Any]]:
     """
-    High-fidelity realistic truck route generator used when TomTom key is absent or quota-limited.
+    High-fidelity realistic truck route generator used only when DEMO_MODE=true.
     Generates 3 distinct plausible routes between origin and destination with realistic highway curvature.
     """
     from ..services.sampler import haversine_miles
@@ -59,11 +73,7 @@ def generate_fallback_routes(
     o_lat, o_lon = float(origin["lat"]), float(origin["lon"])
     d_lat, d_lon = float(destination["lat"]), float(destination["lon"])
     direct_dist = haversine_miles(o_lat, o_lon, d_lat, d_lon)
-    base_dist = max(10.0, direct_dist * 1.18)  # Highway routing circuity factor
 
-    # Route 1: Main direct corridor
-    # Route 2: Northern / Eastern bypass arc
-    # Route 3: Southern / Western bypass arc
     variants = [
         {"id": "r1", "name": "Interstate Primary", "offset_mi": 0.0, "circuity": 1.15, "speed_mph": 58.0},
         {"id": "r2", "name": "Northern Corridor", "offset_mi": min(45.0, max(15.0, direct_dist * 0.12)), "circuity": 1.23, "speed_mph": 54.0},
@@ -109,20 +119,26 @@ async def calculate_tomtom_routes(
     destination: Dict[str, Any],
     departure_dt: datetime,
     load_weight_lb: float
-) -> List[Dict[str, Any]]:
+) -> Tuple[List[Dict[str, Any]], bool]:
     """
-    Fetches 3 truck routes from TomTom Calculate Route API with fallback if key is missing/invalid.
+    Fetches 3 truck routes from TomTom Calculate Route API.
+    If TOMTOM_API_KEY is missing:
+      - If DEMO_MODE=true, returns (routes, True)
+      - Otherwise raises TomTomConfigurationError("TomTom API key not configured")
     """
     api_key = os.environ.get("TOMTOM_API_KEY", "").strip()
+    demo_active = is_demo_mode_enabled()
+
     if not api_key:
-        logger.info("TOMTOM_API_KEY not found; using fallback realistic routing generator")
-        return generate_fallback_routes(origin, destination, departure_dt, load_weight_lb)
+        if demo_active:
+            logger.info("DEMO_MODE=true: Returning synthetic truck corridors")
+            return generate_fallback_routes(origin, destination, departure_dt, load_weight_lb), True
+        raise TomTomConfigurationError("TomTom API key not configured")
 
     o_lat, o_lon = origin["lat"], origin["lon"]
     d_lat, d_lon = destination["lat"], destination["lon"]
     weight_kg = int(load_weight_lb * LB_TO_KG)
 
-    # ISO string with UTC or timezone
     depart_str = departure_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
     url = f"{TOMTOM_ROUTING_URL}/{o_lat},{o_lon}:{d_lat},{d_lon}/json"
 
@@ -140,13 +156,17 @@ async def calculate_tomtom_routes(
         async with httpx.AsyncClient() as client:
             resp = await client.get(url, params=params, timeout=12.0)
             if resp.status_code != 200:
-                logger.warning(f"TomTom routing returned HTTP {resp.status_code}: {resp.text}")
-                return generate_fallback_routes(origin, destination, departure_dt, load_weight_lb)
+                logger.error(f"TomTom routing returned HTTP {resp.status_code}: {resp.text}")
+                if demo_active:
+                    return generate_fallback_routes(origin, destination, departure_dt, load_weight_lb), True
+                raise TomTomAPIError(f"TomTom API returned error: HTTP {resp.status_code}")
 
             data = resp.json()
             raw_routes = data.get("routes", [])
             if not raw_routes:
-                return generate_fallback_routes(origin, destination, departure_dt, load_weight_lb)
+                if demo_active:
+                    return generate_fallback_routes(origin, destination, departure_dt, load_weight_lb), True
+                raise TomTomAPIError("TomTom returned zero routes for this origin and destination")
 
             parsed_routes = []
             for idx, r in enumerate(raw_routes):
@@ -175,7 +195,7 @@ async def calculate_tomtom_routes(
                     "instructions": instructions,
                 })
 
-            # If TomTom returned fewer than 3 routes, synthetically generate alternative via-point routes
+            # If TomTom returned fewer than 3 routes, fill with via-point alternatives or demo routes if permitted
             while len(parsed_routes) < 3:
                 missing_idx = len(parsed_routes)
                 fallback_alt = generate_fallback_routes(origin, destination, departure_dt, load_weight_lb)
@@ -184,17 +204,21 @@ async def calculate_tomtom_routes(
                 else:
                     break
 
-            return parsed_routes[:3]
+            return parsed_routes[:3], False
 
+    except (TomTomConfigurationError, TomTomAPIError):
+        raise
     except Exception as exc:
         logger.error(f"TomTom routing call exception: {exc}")
-        return generate_fallback_routes(origin, destination, departure_dt, load_weight_lb)
+        if demo_active:
+            return generate_fallback_routes(origin, destination, departure_dt, load_weight_lb), True
+        raise TomTomAPIError(f"TomTom routing request failed: {str(exc)}")
 
 
 async def geocode_query(query: str) -> List[Dict[str, Any]]:
     """
-    Geocodes an address or city query.
-    Uses TomTom if TOMTOM_API_KEY is present; falls back to Photon/Nominatim for reliable zero-config.
+    Geocodes an address or city query using TomTom Search API.
+    Raises TomTomConfigurationError if TOMTOM_API_KEY is not configured and DEMO_MODE is not true.
     """
     if not query or len(query.strip()) < 2:
         return []
@@ -202,67 +226,49 @@ async def geocode_query(query: str) -> List[Dict[str, Any]]:
     q = query.strip()
     api_key = os.environ.get("TOMTOM_API_KEY", "").strip()
 
-    if api_key:
-        try:
-            url = f"{TOMTOM_GEOCODE_URL}/{httpx.URL(q)}.json"
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(url, params={"key": api_key, "limit": 5, "countrySet": "US"}, timeout=5.0)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    results = []
-                    for item in data.get("results", []):
-                        pos = item.get("position", {})
-                        addr = item.get("address", {})
-                        freeform = addr.get("freeformAddress", "")
-                        label = freeform if freeform else f"{addr.get('municipality', '')}, {addr.get('countrySubdivision', '')}"
-                        results.append({
-                            "lat": round(pos.get("lat", 0.0), 5),
-                            "lon": round(pos.get("lon", 0.0), 5),
-                            "label": label.strip(", "),
-                        })
-                    if results:
-                        return results
-        except Exception as exc:
-            logger.warning(f"TomTom geocode failed: {exc}")
+    if not api_key:
+        if is_demo_mode_enabled():
+            # In DEMO_MODE only, provide demo search results
+            presets = [
+                {"lat": 32.7767, "lon": -96.7970, "label": "Dallas, TX"},
+                {"lat": 39.7392, "lon": -104.9903, "label": "Denver, CO"},
+                {"lat": 41.8781, "lon": -87.6298, "label": "Chicago, IL"},
+                {"lat": 44.9778, "lon": -93.2650, "label": "Minneapolis, MN"},
+                {"lat": 34.0522, "lon": -118.2437, "label": "Los Angeles, CA"},
+                {"lat": 33.4484, "lon": -112.0740, "label": "Phoenix, AZ"},
+            ]
+            matched = [p for p in presets if q.lower() in p["label"].lower()]
+            return matched if matched else presets[:3]
+        raise TomTomConfigurationError("TomTom API key not configured")
 
-    # Fallback to Photon geocoder (OpenStreetMap, no key required)
+    # Real TomTom Search / Geocoding call
     try:
-        photon_url = "https://photon.komoot.io/api/"
+        url = f"{TOMTOM_GEOCODE_URL}/{httpx.URL(q)}.json"
         async with httpx.AsyncClient() as client:
-            resp = await client.get(photon_url, params={"q": q, "limit": 5, "lang": "en"}, timeout=4.0)
+            resp = await client.get(
+                url,
+                params={"key": api_key, "limit": 5, "countrySet": "US"},
+                timeout=5.0
+            )
             if resp.status_code == 200:
                 data = resp.json()
                 results = []
-                for feat in data.get("features", []):
-                    geom = feat.get("geometry", {})
-                    props = feat.get("properties", {})
-                    coords = geom.get("coordinates", [0, 0])
-                    name = props.get("name", "")
-                    state = props.get("state", "")
-                    country = props.get("country", "")
-                    parts = [p for p in [name, state, country] if p]
+                for item in data.get("results", []):
+                    pos = item.get("position", {})
+                    addr = item.get("address", {})
+                    freeform = addr.get("freeformAddress", "")
+                    label = freeform if freeform else f"{addr.get('municipality', '')}, {addr.get('countrySubdivision', '')}"
                     results.append({
-                        "lat": round(coords[1], 5),
-                        "lon": round(coords[0], 5),
-                        "label": ", ".join(parts),
+                        "lat": round(pos.get("lat", 0.0), 5),
+                        "lon": round(pos.get("lon", 0.0), 5),
+                        "label": label.strip(", "),
                     })
-                if results:
-                    return results
+                return results
+            else:
+                logger.error(f"TomTom geocode returned HTTP {resp.status_code}: {resp.text}")
+                raise TomTomAPIError(f"TomTom geocode returned HTTP {resp.status_code}")
+    except (TomTomConfigurationError, TomTomAPIError):
+        raise
     except Exception as exc:
-        logger.warning(f"Photon geocode failed: {exc}")
-
-    # Default common presets fallback for instant offline typing
-    presets = [
-        {"lat": 32.7767, "lon": -96.7970, "label": "Dallas, TX"},
-        {"lat": 39.7392, "lon": -104.9903, "label": "Denver, CO"},
-        {"lat": 41.8781, "lon": -87.6298, "label": "Chicago, IL"},
-        {"lat": 44.9778, "lon": -93.2650, "label": "Minneapolis, MN"},
-        {"lat": 34.0522, "lon": -118.2437, "label": "Los Angeles, CA"},
-        {"lat": 33.4484, "lon": -112.0740, "label": "Phoenix, AZ"},
-        {"lat": 33.7490, "lon": -84.3880, "label": "Atlanta, GA"},
-        {"lat": 25.7617, "lon": -80.1918, "label": "Miami, FL"},
-        {"lat": 47.6062, "lon": -122.3321, "label": "Seattle, WA"},
-    ]
-    matched = [p for p in presets if q.lower() in p["label"].lower()]
-    return matched if matched else presets[:3]
-
+        logger.error(f"TomTom geocode exception: {exc}")
+        raise TomTomAPIError(f"TomTom geocoding failed: {str(exc)}")

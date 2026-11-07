@@ -53,6 +53,7 @@ export interface RoutePlan {
 
 export interface TripPlanResponse {
   trip_id: string;
+  demo_mode?: boolean;
   recommended_route_id: string;
   recommendation_reason: string;
   no_safe_route: boolean;
@@ -85,3 +86,4 @@ export interface CorridorHeatmapGeoJSON {
   type: "FeatureCollection";
   features: CorridorHeatmapFeature[];
 }
+

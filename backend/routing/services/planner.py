@@ -27,7 +27,7 @@ async def plan_trip(
     Returns complete plan payload and caches results for subsequent heatmap queries.
     """
     # 1. Fetch 3 routes
-    raw_routes = await calculate_tomtom_routes(
+    raw_routes, is_demo = await calculate_tomtom_routes(
         origin=origin,
         destination=destination,
         departure_dt=departure_dt,
@@ -144,6 +144,7 @@ async def plan_trip(
 
     return {
         "trip_id": trip_id,
+        "demo_mode": is_demo,
         "recommended_route_id": recommended_id,
         "recommendation_reason": reason,
         "no_safe_route": no_safe_route,

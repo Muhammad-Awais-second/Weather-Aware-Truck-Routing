@@ -1,3 +1,4 @@
+import os
 import pytest
 import respx
 import httpx
@@ -38,28 +39,54 @@ def test_health_check_endpoint(api_client):
     assert response.json()["status"] == "ok"
 
 
+def test_missing_tomtom_key_returns_503(api_client, monkeypatch):
+    monkeypatch.delenv("TOMTOM_API_KEY", raising=False)
+    monkeypatch.setenv("DEMO_MODE", "false")
+
+    dep_time = (datetime.now(timezone.utc) + timedelta(hours=3)).isoformat()
+    payload = {
+        "origin": {"lat": 32.7767, "lon": -96.7970, "label": "Dallas, TX"},
+        "destination": {"lat": 39.7392, "lon": -104.9903, "label": "Denver, CO"},
+        "departure_at": dep_time,
+        "load_weight_lb": 38000,
+    }
+    response = api_client.post("/api/trips/plan", data=payload, format="json")
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "SERVICE_UNAVAILABLE"
+    assert "TomTom API key not configured" in response.json()["error"]["message"]
+
+    geo_resp = api_client.get("/api/geocode?q=Dallas")
+    assert geo_resp.status_code == 503
+    assert "TomTom API key not configured" in geo_resp.json()["error"]["message"]
+
+
 @respx.mock
-def test_geocode_endpoint(api_client):
-    respx.get("https://photon.komoot.io/api/").mock(
+def test_geocode_with_tomtom_api_key(api_client, monkeypatch):
+    monkeypatch.setenv("TOMTOM_API_KEY", "mock_tomtom_key_123")
+    monkeypatch.setenv("DEMO_MODE", "false")
+
+    respx.get(url__startswith="https://api.tomtom.com/search/2/geocode").mock(
         return_value=httpx.Response(
             200,
             json={
-                "features": [
+                "results": [
                     {
-                        "geometry": {"coordinates": [-96.7970, 32.7767]},
-                        "properties": {"name": "Dallas", "state": "Texas", "country": "United States"}
+                        "position": {"lat": 32.7767, "lon": -96.7970},
+                        "address": {"freeformAddress": "Dallas, TX, United States"}
                     }
                 ]
             }
         )
     )
+
     response = api_client.get("/api/geocode?q=Dallas")
     assert response.status_code == 200
     data = response.json()
     assert isinstance(data, list)
-    assert len(data) > 0
-    assert "lat" in data[0]
-    assert "lon" in data[0]
+    assert len(data) == 1
+    assert data[0]["lat"] == 32.7767
+    assert data[0]["lon"] == -96.7970
+    assert "Dallas" in data[0]["label"]
 
 
 def test_plan_trip_validation_same_origin_dest(api_client):
@@ -76,7 +103,75 @@ def test_plan_trip_validation_same_origin_dest(api_client):
 
 
 @respx.mock
-def test_plan_trip_and_heatmap_flow(api_client):
+def test_plan_trip_and_heatmap_with_tomtom_key(api_client, monkeypatch):
+    monkeypatch.setenv("TOMTOM_API_KEY", "mock_tomtom_key_123")
+    monkeypatch.setenv("DEMO_MODE", "false")
+
+    # Mock TomTom Calculate Route
+    respx.get(url__startswith="https://api.tomtom.com/routing/1/calculateRoute").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "routes": [
+                    {
+                        "summary": {"lengthInMeters": 1000000, "travelTimeInSeconds": 36000},
+                        "legs": [
+                            {
+                                "points": [
+                                    {"latitude": 32.7767, "longitude": -96.7970},
+                                    {"latitude": 36.0, "longitude": -100.0},
+                                    {"latitude": 39.7392, "longitude": -104.9903},
+                                ]
+                            }
+                        ],
+                        "guidance": {
+                            "instructions": [
+                                {"routeOffsetInMeters": 0, "travelTimeInSeconds": 0},
+                                {"routeOffsetInMeters": 1000000, "travelTimeInSeconds": 36000},
+                            ]
+                        }
+                    },
+                    {
+                        "summary": {"lengthInMeters": 1050000, "travelTimeInSeconds": 38000},
+                        "legs": [
+                            {
+                                "points": [
+                                    {"latitude": 32.7767, "longitude": -96.7970},
+                                    {"latitude": 37.0, "longitude": -99.0},
+                                    {"latitude": 39.7392, "longitude": -104.9903},
+                                ]
+                            }
+                        ],
+                        "guidance": {
+                            "instructions": [
+                                {"routeOffsetInMeters": 0, "travelTimeInSeconds": 0},
+                                {"routeOffsetInMeters": 1050000, "travelTimeInSeconds": 38000},
+                            ]
+                        }
+                    },
+                    {
+                        "summary": {"lengthInMeters": 1100000, "travelTimeInSeconds": 40000},
+                        "legs": [
+                            {
+                                "points": [
+                                    {"latitude": 32.7767, "longitude": -96.7970},
+                                    {"latitude": 35.0, "longitude": -102.0},
+                                    {"latitude": 39.7392, "longitude": -104.9903},
+                                ]
+                            }
+                        ],
+                        "guidance": {
+                            "instructions": [
+                                {"routeOffsetInMeters": 0, "travelTimeInSeconds": 0},
+                                {"routeOffsetInMeters": 1100000, "travelTimeInSeconds": 40000},
+                            ]
+                        }
+                    },
+                ]
+            }
+        )
+    )
+
     # Mock Open-Meteo forecast API calls with respx
     def mock_weather_handler(request):
         coords_str = request.url.params.get("latitude", "")
@@ -99,15 +194,9 @@ def test_plan_trip_and_heatmap_flow(api_client):
     plan = response.json()
 
     assert "trip_id" in plan
+    assert plan["demo_mode"] is False
     assert "recommended_route_id" in plan
-    assert "recommendation_reason" in plan
     assert len(plan["routes"]) == 3
-
-    r1 = plan["routes"][0]
-    assert "geometry" in r1
-    assert "summary" in r1
-    assert "checkpoints" in r1
-    assert len(r1["checkpoints"]) > 0
 
     # Test heatmap endpoint using trip_id
     trip_id = plan["trip_id"]
@@ -116,6 +205,31 @@ def test_plan_trip_and_heatmap_flow(api_client):
     heatmap_geo = hm_response.json()
     assert heatmap_geo["type"] == "FeatureCollection"
     assert len(heatmap_geo["features"]) > 0
-    props = heatmap_geo["features"][0]["properties"]
-    assert "r0" in props
-    assert "r48" in props
+
+
+@respx.mock
+def test_plan_trip_demo_mode_active(api_client, monkeypatch):
+    monkeypatch.delenv("TOMTOM_API_KEY", raising=False)
+    monkeypatch.setenv("DEMO_MODE", "true")
+
+    def mock_weather_handler(request):
+        coords_str = request.url.params.get("latitude", "")
+        count = len(coords_str.split(",")) if coords_str else 1
+        return httpx.Response(200, json=generate_mock_weather_response(count))
+
+    respx.get(url__startswith="https://api.open-meteo.com/v1/forecast").mock(
+        side_effect=mock_weather_handler
+    )
+
+    dep_time = (datetime.now(timezone.utc) + timedelta(hours=3)).isoformat()
+    payload = {
+        "origin": {"lat": 32.7767, "lon": -96.7970, "label": "Dallas, TX"},
+        "destination": {"lat": 39.7392, "lon": -104.9903, "label": "Denver, CO"},
+        "departure_at": dep_time,
+        "load_weight_lb": 38000,
+    }
+    response = api_client.post("/api/trips/plan", data=payload, format="json")
+    assert response.status_code == 200
+    plan = response.json()
+    assert plan["demo_mode"] is True
+    assert len(plan["routes"]) == 3

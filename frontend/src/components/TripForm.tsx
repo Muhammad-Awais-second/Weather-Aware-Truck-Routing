@@ -132,11 +132,10 @@ export const TripForm: React.FC<TripFormProps> = ({
               key={mi}
               type="button"
               onClick={() => onIntervalChange(mi)}
-              className={`px-2 py-0.5 text-xs font-semibold rounded transition-all ${
-                selectedInterval === mi
+              className={`px-2 py-0.5 text-xs font-semibold rounded transition-all ${selectedInterval === mi
                   ? "bg-white text-indigo-700 shadow-xs border border-slate-200"
                   : "text-slate-600 hover:text-slate-900"
-              }`}
+                }`}
             >
               {mi} mi
             </button>
@@ -290,11 +289,10 @@ export const TripForm: React.FC<TripFormProps> = ({
                   key={wt}
                   type="button"
                   onClick={() => setLoadWeight(wt)}
-                  className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
-                    loadWeight === wt
+                  className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${loadWeight === wt
                       ? "bg-indigo-600 text-white border-indigo-600"
                       : "bg-slate-100 text-slate-600 hover:bg-slate-200 border-slate-200"
-                  }`}
+                    }`}
                 >
                   {wt / 1000}k
                 </button>

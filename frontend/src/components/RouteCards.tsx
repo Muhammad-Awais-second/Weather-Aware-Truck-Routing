@@ -15,10 +15,27 @@ export const RouteCards: React.FC<RouteCardsProps> = ({
   selectedRouteId,
   onSelectRoute,
 }) => {
-  const { routes, recommended_route_id, recommendation_reason, no_safe_route } = planData;
+  const { routes, recommended_route_id, recommendation_reason, no_safe_route, demo_mode } = planData;
 
   return (
     <div className="space-y-3">
+      {demo_mode && (
+        <div className="p-3.5 bg-amber-50 text-amber-900 rounded-xl border border-amber-300 shadow-sm flex items-start gap-3">
+          <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+          <div>
+            <div className="text-sm font-bold tracking-tight flex items-center gap-1.5">
+              <span>Demo Routes Active</span>
+              <span className="text-[10px] uppercase font-bold bg-amber-200 text-amber-900 px-1.5 py-0.5 rounded">
+                DEMO_MODE=true
+              </span>
+            </div>
+            <div className="text-xs text-amber-800 mt-0.5 leading-relaxed">
+              TomTom API key is not configured on the backend. Displaying synthetic highway corridors with live Open-Meteo weather sampling for evaluation.
+            </div>
+          </div>
+        </div>
+      )}
+
       {no_safe_route && (
         <div className="p-3.5 bg-purple-900 text-purple-100 rounded-xl border border-purple-700 shadow-sm flex items-start gap-3">
           <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />

@@ -17,7 +17,7 @@ interface MapViewProps {
 
 const DEFAULT_STYLE =
   import.meta.env.VITE_MAP_STYLE_URL ||
-  "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
+  "https://tiles.openfreemap.org/styles/liberty";
 
 export const MapView: React.FC<MapViewProps> = ({
   routes,
@@ -225,13 +225,12 @@ export const MapView: React.FC<MapViewProps> = ({
                 <div><span style="color:#64748b;">Rain:</span> <strong>${props.rain} in/h</strong></div>
                 <div><span style="color:#64748b;">Snow:</span> <strong>${props.snow} in/h</strong></div>
               </div>
-              ${
-                reasons.length > 0
-                  ? `<div style="padding: 6px 8px; background: #fef2f2; border-left: 3px solid #ef4444; color: #991b1b; font-size: 11px; border-radius: 2px;">
+              ${reasons.length > 0
+            ? `<div style="padding: 6px 8px; background: #fef2f2; border-left: 3px solid #ef4444; color: #991b1b; font-size: 11px; border-radius: 2px;">
                       ${reasons.join("<br/>")}
                     </div>`
-                  : ""
-              }
+            : ""
+          }
             </div>
           </div>
         `;
@@ -356,11 +355,11 @@ export const MapView: React.FC<MapViewProps> = ({
               ["linear"],
               ["heatmap-density"],
               0, "rgba(34, 197, 94, 0)",
-              0.2, "rgba(34, 197, 94, 0.5)",
-              0.4, "rgba(234, 179, 8, 0.65)",
-              0.65, "rgba(249, 115, 22, 0.8)",
-              0.85, "rgba(239, 68, 68, 0.9)",
-              1.0, "rgba(88, 28, 135, 0.95)"
+              0.2, RISK_COLORS["Low"],
+              0.4, RISK_COLORS["Moderate"],
+              0.65, RISK_COLORS["High"],
+              0.85, RISK_COLORS["Severe"],
+              1.0, RISK_COLORS["No Travel"]
             ],
             "heatmap-radius": [
               "interpolate",

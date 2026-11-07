@@ -46,3 +46,4 @@ export function formatSliderLabel(departureIso: string, hourOffset: number): str
     return `+${hourOffset} h`;
   }
 }
+

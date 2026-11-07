@@ -12,7 +12,7 @@ from asgiref.sync import async_to_sync
 from .serializers import TripPlanRequestSerializer
 from .services.planner import plan_trip
 from .services.corridor import build_corridor_heatmap_geojson
-from .clients.tomtom import geocode_query
+from .clients.tomtom import geocode_query, TomTomConfigurationError, TomTomAPIError
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,17 @@ def plan_trip_view(request):
             load_weight_lb=validated_data["load_weight_lb"]
         )
         return Response(plan_result, status=status.HTTP_200_OK)
+    except TomTomConfigurationError as exc:
+        return Response(
+            {"error": {"code": "SERVICE_UNAVAILABLE", "message": "TomTom API key not configured"}},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE
+        )
+    except TomTomAPIError as exc:
+        logger.error(f"TomTom API routing failure: {exc}")
+        return Response(
+            {"error": {"code": "ROUTING_UNAVAILABLE", "message": str(exc)}},
+            status=status.HTTP_502_BAD_GATEWAY
+        )
     except Exception as exc:
         logger.exception("Error executing trip planning")
         return Response(
@@ -91,6 +102,11 @@ def geocode_view(request):
     try:
         results = async_to_sync(geocode_query)(query)
         return Response(results, status=status.HTTP_200_OK)
+    except TomTomConfigurationError as exc:
+        return Response(
+            {"error": {"code": "SERVICE_UNAVAILABLE", "message": "TomTom API key not configured"}},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE
+        )
     except Exception as exc:
         logger.error(f"Geocoding view error: {exc}")
         return Response([], status=status.HTTP_200_OK)
