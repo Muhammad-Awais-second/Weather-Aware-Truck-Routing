@@ -20,19 +20,19 @@
 Reference captures showcasing core user workflows:
 
 - **01. Multi-Route Overview & Interactive Map:**  
-  `docs/screenshots/01-routes-and-map.png`  
+  ![Multi-Route Overview & Interactive Map](docs/screenshots/01-routes-and-map.png)  
   *Three alternative truck routes rendered in MapLibre GL with selectable routes and primary safety indicators.*
 
 - **02. Checkpoint Weather Detail Popup:**  
-  `docs/screenshots/02-checkpoint-popup.png`  
+  ![Checkpoint Weather Detail Popup](docs/screenshots/02-checkpoint-popup.png)  
   *Clicking any checkpoint displays ETA, sustained wind, peak gust, rain rate, snowfall, risk category, and specific load escalation reasons.*
 
 - **03. 48-Hour Corridor Heatmap & Scrubbing Slider:**  
-  `docs/screenshots/03-heatmap-slider.png`  
+  ![48-Hour Corridor Heatmap & Scrubbing Slider](docs/screenshots/03-heatmap-slider.png)  
   *Corridor grid points and heatmap density showing spatial weather risk progression from departure up to +48 hours.*
 
 - **04. Ranked Route Comparison Cards:**  
-  `docs/screenshots/04-route-cards.png`  
+  ![Ranked Route Comparison Cards](docs/screenshots/04-route-cards.png)  
   *Side-by-side comparison cards breaking down miles by risk level, average risk index, travel duration, and lexicographic rank.*
 
 ---
@@ -43,9 +43,10 @@ Reference captures showcasing core user workflows:
 - **ETA-Specific Checkpoint Weather Sampling:** Samples points at 5-mile base increments and computes piecewise arrival times (`departure_time + travel_time`). Fetches synchronized hourly forecast weather (wind speed, wind gusts, rain, convective showers, snowfall) from Open-Meteo.
 - **Dynamic Checkpoint Intervals:** Instantly toggle between 10-mile, 25-mile, or 50-mile checkpoint views directly on the map without re-fetching data.
 - **Load-Aware Risk Escalation:** Implements specialized commercial truck physics rules—high winds elevate risk more aggressively for heavier loads.
-- **4-Step Lexicographic Route Ranking:** Deterministic safety tie-breaker prioritizes minimizing severe conditions before considering travel duration.
+- **5-Step Lexicographic Route Ranking:** Deterministic safety tie-breaker prioritizes minimizing severe conditions before considering travel duration.
 - **0–48 Hour Corridor Risk Slider:** Scrub through 49 hours of corridor risk at 60 FPS using client-side GPU paint properties with zero network calls.
 - **Dual Corridor Visualization:** Circle point layer guarantees visibility even during all-Low weather conditions, combined with a smooth density heatmap.
+- **Strict API Key & Fallback Guard:** If `TOMTOM_API_KEY` is missing, the backend returns a clear 503 error ("TomTom API key not configured"); synthetic fallback routes run only when `DEMO_MODE=true` is set.
 
 ---
 
@@ -234,7 +235,7 @@ pytest --cov=routing
 ```text
 ============================= test session starts =============================
 platform win32 -- Python 3.14.0, pytest-9.2.0, pluggy-1.7.0
-rootdir: C:\Users\DANISH LAPTOP\Downloads\new project\backend
+rootdir: backend
 configfile: pytest.ini
 plugins: anyio-4.16.0, cov-7.1.0, django-4.14.0, respx-0.23.1
 collected 21 items
